@@ -35,3 +35,9 @@ output/qa/
 Thumbs.db
 .idea/
 .vscode/
+
+# 理赔触发运行日志/反馈（含案件流水，非源码）
+output/*.jsonl
+
+# 本机专属启动脚本（含本机 Python 绝对路径，不入库）
+启动_workbuddy.bat

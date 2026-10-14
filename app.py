@@ -23,6 +23,7 @@ for _m in [k for k in list(sys.modules) if k == "web" or k.startswith("web.")]:
     del sys.modules[_m]
 
 from web import runner, ui, styles, trigger
+from modules.e import kr1_source, event as claim_event, pipeline as claim_pipeline
 
 st.set_page_config(page_title="理赔后医护关怀", page_icon="🏥", layout="wide")
 styles.inject_css(st)
@@ -39,7 +40,7 @@ if not api_config()["api_key"]:
 # —— 演示模式切换 ——
 mode = st.radio(
     "演示模式",
-    ["📎 手动上传病历图片", "⚡ 模拟理赔结案事件（事件触发）"],
+    ["📎 手动上传病历图片", "⚡ 模拟理赔结案事件（事件触发）", "🗂 KR1 真实案件直通（免OCR + 触达计划）"],
     horizontal=True,
 )
 
@@ -75,7 +76,7 @@ if mode == "📎 手动上传病历图片":
         st.session_state["reset_counter"] = rc + 1
         st.rerun()
 
-else:
+elif mode == "⚡ 模拟理赔结案事件（事件触发）":
     # —— 模拟理赔结案事件 ——
     st.markdown("**理赔核心系统推送「claim.closed」结案事件 → 触发信号判定 → 引擎自动出结果。**")
     cases = trigger.load_cases()
@@ -129,12 +130,50 @@ else:
             for sig, det in (ev.get("_details") or {}).items():
                 st.caption(f"· {sig}：{det}")
 
+elif mode == "🗂 KR1 真实案件直通（免OCR + 触达计划）":
+    # 直接选 KR1 的 70 个真实案件号，跳过 OCR 跑 a→b→c→d→触达（合并自队友分支）
+    claims = kr1_source.list_claims()
+    if not claims:
+        st.error(kr1_source.diagnose())
+    else:
+        @st.cache_data(ttl=300)
+        def _claim_label(c):
+            s = kr1_source.claim_summary(c)
+            return f"{c} ｜ {s['hospital'] or '—'} ｜ 材料 {s['n_materials']} 份"
+        c1, c2, c3 = st.columns([3, 1, 1])
+        with c1:
+            claim_id = st.selectbox("选择理赔案件号（模拟该案件刚刚结案）",
+                                    claims, format_func=_claim_label)
+        with c2:
+            use_llm = st.checkbox("调用 LLM", value=True, key="kr1_llm")
+        with c3:
+            go = st.button("触发关怀流程", type="primary", use_container_width=True)
+        if go and claim_id:
+            ev = claim_event.from_manual(claim_id)
+            with st.status("理赔结案事件已到达，正在处理…", expanded=True) as status:
+                def progress(msg):
+                    status.update(label=msg)
+                try:
+                    res = claim_pipeline.handle_claim_closed(ev, use_llm=use_llm, progress=progress)
+                    st.session_state["result"] = res
+                    st.session_state["result_pid"] = res["pid"]
+                except Exception as e:
+                    st.error(f"处理失败：{type(e).__name__}: {e}")
+        if st.button("清空结果", key="kr1_clear"):
+            st.session_state.pop("result", None)
+            st.session_state.pop("result_pid", None)
+            st.rerun()
+
 # —— 结果区（两种模式共用） ——
 if "result" in st.session_state:
     r = st.session_state["result"]
     st.success(f"分析完成（病人 {r['pid']}）")
 
-    tabs = st.tabs(["📋 结构化结果", "⚠️ 就医痛点", "💌 温度指引", "🏥 品质画像", "💡 关怀增强"])
+    has_touch = "touchplan" in r
+    names = ["📋 结构化结果", "⚠️ 就医痛点", "💌 温度指引", "🏥 品质画像", "💡 关怀增强"]
+    if has_touch:
+        names.append("📣 触达计划")
+    tabs = st.tabs(names)
     with tabs[0]:
         ui.render_record(r["record"], st)
     with tabs[1]:
@@ -145,3 +184,16 @@ if "result" in st.session_state:
         ui.render_quality(st, record=r["record"])
     with tabs[4]:
         ui.render_enhance(st, enhance=r.get("enhance"))
+    if has_touch:
+        with tabs[5]:
+            ev = r.get("event")
+            if ev:
+                with st.container(border=True):
+                    st.markdown("**⚡ 触发源：理赔结案事件**")
+                    st.caption("理赔审核系统在案件结案时推送该事件，引擎消费后自动跑完后续全部环节")
+                    st.code(
+                        "event_id:     %s\nevent_type:   %s\nsource:       %s\nclaim_id:     %s\nclosed_at:    %s\npatient_ref:  %s\nmaterials:    %d 份"
+                        % (ev.get("event_id"), ev.get("event_type"), ev.get("source_system"),
+                           ev.get("claim_id"), ev.get("closed_at"), ev.get("patient_ref"),
+                           len(ev.get("materials", []))), language="yaml")
+            ui.render_touchplan(r["touchplan"], st, event=r.get("event"))
