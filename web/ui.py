@@ -81,11 +81,7 @@ def render_record(rec, st):
 # ---------------------------------------------------------------------------
 
 def render_pain_points(pp, st):
-    # 兼容两种形态：{"pain_points": [...]} 或直接 [...]
-    if isinstance(pp, list):
-        pps = pp
-    else:
-        pps = (pp or {}).get("pain_points", []) or []
+    pps = pp.get("pain_points", []) or []
     if not pps:
         st.success("未识别出明显痛点 🎉")
         return
@@ -116,9 +112,6 @@ def render_pain_points(pp, st):
 # ---------------------------------------------------------------------------
 
 def render_guidance(g, st):
-    if not g:                      # 指引生成失败时兜底，不让整页崩掉
-        st.info("温度指引暂未生成（LLM 异常时可重试，或查看结构化结果与痛点）")
-        return
     title = _esc(g.get("title") or "个性化健康指引")
     greeting = _esc(g.get("greeting") or "")
     sections = g.get("sections", []) or []
@@ -274,28 +267,17 @@ def render_enhance(st, enhance=None):
         if topics:
             st.caption(f"追踪主题：{'、'.join(topics)}")
 
+    # —— 5. 异常模式监控（对模式变异免疫，加分项）——
+    am = enhance.get("anomaly_monitoring", {})
+    if am:
+        st.subheader("🛡️ 异常模式监控（对模式变异免疫）")
+        res = am.get("result", {})
+        st.markdown(f"- **告警规则**：{_esc(am.get('rule', ''))}")
+        st.markdown(f"- **当前结论**：{_esc(res.get('message', ''))}")
+        for a in res.get("alerts", []):
+            st.warning(f"⚠️ 主题「{_esc(a['topic'])}」较基线增长 {a['growth']:.0%}（基线 {a['baseline']} → 当前 {a['current']}）")
+        baseline = am.get("baseline_topics", {})
+        if baseline:
+            top = sorted(baseline.items(), key=lambda x: -x[1])[:8]
+            st.caption("问答库主题基线（真实）：" + "、".join(f"{k} {v}" for k, v in top))
 
-
-# ---------------------------------------------------------------------------
-# 触达计划时间轴（理赔触发链路，合并自队友分支）
-# ---------------------------------------------------------------------------
-
-def render_touchplan(touchplan, st, event=None):
-    """渲染理赔触发后的触达计划：何时推、推什么、什么渠道。"""
-    if event:
-        st.caption(f"结案事件 {_esc(event.get('event_id'))} ｜ 案件号 {_esc(event.get('claim_id'))} "
-                   f"｜ 来源 {_esc(event.get('source_system'))} ｜ 结案时间 {_esc(event.get('closed_at'))}")
-    if not touchplan:
-        st.info("暂无触达计划")
-        return
-    for t in touchplan:
-        label = f"T+{t['offset_hours']}h · {t['send_at']} ｜ {t['channel']} ｜ {t['scene']}"
-        with st.expander(label, expanded=(t["offset_hours"] == 24)):
-            st.caption(_esc(t["purpose"]))
-            st.markdown(_esc(t["content"]))
-            facts = t.get("cited_facts") or {}
-            if facts:
-                st.caption("引用事实：" + "、".join(f"{k}={v}" for k, v in facts.items()))
-    st.markdown("---")
-    st.caption("反馈回流：用户点击 / 评分 / 追问会写入 output/feedback.jsonl，"
-               "用于迭代温度指引 prompt 与画像权重。")

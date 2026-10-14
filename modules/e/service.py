@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import json
 from typing import List, Dict, Optional
 
 from . import retriever
@@ -231,16 +232,46 @@ def anomaly_monitor(dialog_topics: List[str], baseline: Dict[str, int]) -> Dict:
     }
 
 
+def topic_baseline() -> Dict[str, int]:
+    """从真实问答库（output/qa/qa_index.json）读各主题问答对数量，作为异常监控基线。"""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "output", "qa", "qa_index.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            index = json.load(f)
+        return {k: len(v) for k, v in index.items() if isinstance(v, list)}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def monitoring_snapshot(record: Dict, faqs: List[Dict]) -> Dict:
+    """异常监控快照：基线（真实问答库主题分布）+ 本病例预判主题作为当前周期样本。
+
+    说明：真实"当前周期"应为上线后周期性工单主题分布，此处以本病例触发的预判主题
+    作为演示样本，仅展示监控机制与告警规则，不声称是真实线上漂移。
+    """
+    baseline = topic_baseline()
+    current = [f["topic"] for f in faqs if f.get("topic")]
+    alert = anomaly_monitor(current, baseline)
+    return {
+        "baseline_topics": baseline,
+        "current_snapshot_topics": current,
+        "rule": "某主题咨询量较基线增长 ≥50% 触发告警",
+        "result": alert,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 汇总入口：模块 e 完整输出
 # ---------------------------------------------------------------------------
 
 def run(record: Dict, top_n_faq: int = 3) -> Dict:
-    """模块 e 端到端：预判 FAQ + 触达 + 增值服务 + 闭环 KPI。"""
+    """模块 e 端到端：预判 FAQ + 触达 + 增值服务 + 闭环 KPI + 异常监控。"""
     faqs = predict_faqs(record, top_n=top_n_faq)
     channel = recommend_channel(record)
     services = recommend_services(record)
     kpi = closed_loop_kpi(faqs)
+    anomaly = monitoring_snapshot(record, faqs)
 
     return {
         "patient_id": _v(record.get("patient_id")) or "",
@@ -248,6 +279,7 @@ def run(record: Dict, top_n_faq: int = 3) -> Dict:
         "channel": channel,
         "value_added_services": services,
         "closed_loop_kpi": kpi,
+        "anomaly_monitoring": anomaly,
     }
 
 

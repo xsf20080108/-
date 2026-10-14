@@ -75,6 +75,21 @@ def render_md(result: dict) -> str:
     lines.append(f"- 目标：{kpi.get('target', '')}")
     lines.append(f"- 追踪主题：{('、'.join(kpi.get('topics_tracked', []))) or '—'}")
 
+    lines.append("")
+    lines.append("## 五、异常模式监控（对模式变异免疫）")
+    am = result.get("anomaly_monitoring", {})
+    if am:
+        res = am.get("result", {})
+        lines.append(f"- 告警规则：{am.get('rule', '')}")
+        lines.append(f"- 当前结论：{res.get('message', '')}")
+        alerts = res.get("alerts", [])
+        for a in alerts:
+            lines.append(f"  - ⚠️ 主题「{a['topic']}」较基线增长 {a['growth']:.0%}（基线 {a['baseline']} → 当前 {a['current']}）")
+        baseline = am.get("baseline_topics", {})
+        if baseline:
+            top = sorted(baseline.items(), key=lambda x: -x[1])[:8]
+            lines.append(f"- 问答库主题基线（真实）：{'、'.join(f'{k} {v}' for k, v in top)}")
+
     return "\n".join(lines)
 
 

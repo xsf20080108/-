@@ -4,3 +4,4 @@ pydantic>=2.0
 anthropic>=0.40
 requests>=2.25
 pillow>=9.0
+openpyxl>=3.0
